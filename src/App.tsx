@@ -1,51 +1,103 @@
 import { useState } from "react";
-import reactLogo from "./assets/react.svg";
 import { invoke } from "@tauri-apps/api/core";
-import "./App.css";
 
-function App() {
-  const [greetMsg, setGreetMsg] = useState("");
-  const [name, setName] = useState("");
+export default function App() {
+  const [targetDir, setTargetDir] = useState("");
+  const [files, setFiles] = useState<string[]>([]);
+  const [status, setStatus] = useState("Ready for directory.");
+  const [isScanning, setIsScanning] = useState(false);
 
-  async function greet() {
-    // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
-    setGreetMsg(await invoke("greet", { name }));
+  async function handleScan() {
+    if (!targetDir) {
+      setStatus("Please enter a directory path.");
+      return;
+    }
+
+    setIsScanning(true);
+    setStatus("Mapping directory tree...");
+    setFiles([]);
+
+    try {
+      const result = await invoke<string[]>("traverse_directory", {
+        dirPath: targetDir,
+      });
+      setFiles(result);
+      setStatus(`Mapped ${result.length} files.`);
+    } catch (error) {
+      console.error("Scan Error:", error);
+      setStatus(`Error: ${error}`);
+    } finally {
+      setIsScanning(false);
+    }
   }
 
   return (
-    <main className="container">
-      <h1>Welcome to Tauri + React</h1>
+    <div className="flex h-screen w-screen bg-slate-950 text-slate-300 font-sans overflow-hidden">
+      <div className="w-80 bg-slate-900 border-r border-slate-800 flex flex-col p-4 z-10 shadow-xl">
+        <h1 className="text-xl font-bold text-white mb-6 tracking-wide">
+          Codebase Cartographer
+        </h1>
 
-      <div className="row">
-        <a href="https://vite.dev" target="_blank">
-          <img src="/vite.svg" className="logo vite" alt="Vite logo" />
-        </a>
-        <a href="https://tauri.app" target="_blank">
-          <img src="/tauri.svg" className="logo tauri" alt="Tauri logo" />
-        </a>
-        <a href="https://react.dev" target="_blank">
-          <img src={reactLogo} className="logo react" alt="React logo" />
-        </a>
+        <div className="flex flex-col gap-3 mb-6">
+          <label className="text-xs uppercase tracking-wider text-slate-500 font-semibold">
+            Target Directory
+          </label>
+          <input
+            type="text"
+            value={targetDir}
+            onChange={(e) => setTargetDir(e.target.value)}
+            placeholder="/absolute/path/to/repo"
+            className="w-full p-2 bg-slate-950 border border-slate-700 rounded text-sm focus:outline-none focus:border-indigo-500 transition-colors"
+          />
+          <button
+            onClick={handleScan}
+            disabled={isScanning}
+            className="w-full py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded text-sm font-semibold disabled:opacity-50 transition-colors"
+          >
+            {isScanning ? "Scanning..." : "Generate Map"}
+          </button>
+        </div>
+
+        <div className="text-xs text-indigo-400 font-mono mb-2">{status}</div>
+
+        <div className="flex-1 overflow-y-auto border border-slate-800 rounded bg-slate-950/50 p-2">
+          {files.length > 0 ? (
+            <ul className="text-xs font-mono space-y-1">
+              {files.map((file, index) => {
+                const fileName = file.split(/[/\\]/).pop();
+                return (
+                  <li
+                    key={index}
+                    className="truncate hover:text-white cursor-default"
+                    title={file}
+                  >
+                    {fileName}
+                  </li>
+                );
+              })}
+            </ul>
+          ) : (
+            <div className="h-full flex items-center justify-center text-slate-600 text-sm italic">
+              No files mapped yet.
+            </div>
+          )}
+        </div>
       </div>
-      <p>Click on the Tauri, Vite, and React logos to learn more.</p>
+      <div className="flex-1 relative bg-slate-950 flex items-center justify-center">
+        <div
+          className="absolute inset-0 opacity-5"
+          style={{
+            backgroundImage: "radial-gradient(#fff 1px, transparent 1px)",
+            backgroundSize: "30px 30px",
+          }}
+        ></div>
 
-      <form
-        className="row"
-        onSubmit={(e) => {
-          e.preventDefault();
-          greet();
-        }}
-      >
-        <input
-          id="greet-input"
-          onChange={(e) => setName(e.currentTarget.value)}
-          placeholder="Enter a name..."
-        />
-        <button type="submit">Greet</button>
-      </form>
-      <p>{greetMsg}</p>
-    </main>
+        <div className="text-center z-10 border border-slate-800 bg-slate-900/80 p-8 rounded-lg shadow-2xl backdrop-blur-sm">
+          <h2 className="text-2xl font-bold text-white mb-2">
+            3D Graph Canvas Space
+          </h2>
+        </div>
+      </div>
+    </div>
   );
 }
-
-export default App;
