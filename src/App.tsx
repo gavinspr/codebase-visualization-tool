@@ -1,36 +1,43 @@
 import { useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 
+interface FileNode {
+  id: string;
+  name: string;
+  imports: string[];
+}
+
+interface GraphPayload {
+  nodes: FileNode[];
+}
+
 export default function App() {
   const [targetDir, setTargetDir] = useState("");
-  const [files, setFiles] = useState<string[]>([]);
   const [status, setStatus] = useState("Ready for directory.");
   const [isScanning, setIsScanning] = useState(false);
+  const [nodes, setNodes] = useState<FileNode[]>([]);
 
   async function handleScan() {
-    if (!targetDir) {
-      setStatus("Please enter a directory path.");
-      return;
-    }
+    if (!targetDir) return;
 
     setIsScanning(true);
-    setStatus("Mapping directory tree...");
-    setFiles([]);
+    setStatus("Mapping codebase architecture...");
+    setNodes([]);
 
     try {
-      const result = await invoke<string[]>("traverse_directory", {
+      const result = await invoke<GraphPayload>("map_codebase", {
         dirPath: targetDir,
       });
-      setFiles(result);
-      setStatus(`Mapped ${result.length} files.`);
+
+      setNodes(result.nodes);
+      setStatus(`Successfully mapped ${result.nodes.length} TypeScript nodes.`);
+      console.log("Graph Payload:", result);
     } catch (error) {
-      console.error("Scan Error:", error);
       setStatus(`Error: ${error}`);
     } finally {
       setIsScanning(false);
     }
   }
-
   return (
     <div className="flex h-screen w-screen bg-slate-950 text-slate-300 font-sans overflow-hidden">
       <div className="w-80 bg-slate-900 border-r border-slate-800 flex flex-col p-4 z-10 shadow-xl">
@@ -61,17 +68,23 @@ export default function App() {
         <div className="text-xs text-indigo-400 font-mono mb-2">{status}</div>
 
         <div className="flex-1 overflow-y-auto border border-slate-800 rounded bg-slate-950/50 p-2">
-          {files.length > 0 ? (
+          {nodes.length > 0 ? (
             <ul className="text-xs font-mono space-y-1">
-              {files.map((file, index) => {
-                const fileName = file.split(/[/\\]/).pop();
+              {nodes.map((node, index) => {
                 return (
                   <li
                     key={index}
-                    className="truncate hover:text-white cursor-default"
-                    title={file}
+                    className="truncate hover:text-indigo-400 cursor-pointer transition-colors p-1 rounded hover:bg-slate-900"
+                    title={node.id}
+                    onClick={() => {
+                      setStatus(`Viewing ${node.name} dependencies...`);
+                      console.log(`\n--- Dependencies for ${node.name} ---`);
+                      console.log(`Path: ${node.id}`);
+                      console.log(`Imports Found: ${node.imports.length}`);
+                      console.dir(node.imports);
+                    }}
                   >
-                    {fileName}
+                    {node.name}
                   </li>
                 );
               })}
