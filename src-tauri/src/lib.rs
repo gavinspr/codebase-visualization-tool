@@ -5,11 +5,21 @@ use tree_sitter::{Parser, Query, QueryCursor, StreamingIterator};
 
 mod language_router;
 
-#[derive(Serialize)]
+struct RawNode {
+    id: String,
+    name: String,
+    imports: Vec<String>,
+}
+
+#[derive(Serialize, Clone)]
 struct FileNode {
     id: String,
     name: String,
     imports: Vec<String>,
+    in_degree: usize,
+    out_degree: usize,
+    centrality_role: String,
+    is_entry_point: bool,
 }
 
 #[derive(Serialize)]
@@ -19,7 +29,7 @@ struct GraphPayload {
 
 #[tauri::command]
 fn map_codebase(dir_path: &str) -> Result<GraphPayload, String> {
-    let mut nodes = Vec::new();
+    let mut raw_nodes: Vec<RawNode> = Vec::new();
 
     let walker = WalkBuilder::new(dir_path)
         .hidden(true)
@@ -37,6 +47,7 @@ fn map_codebase(dir_path: &str) -> Result<GraphPayload, String> {
 
                 let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
 
+                // Dynamic routing based on extension
                 if let Some(config) = language_router::get_parser_config(ext) {
                     if let Ok(source_code) = fs::read_to_string(path) {
                         let mut parser = Parser::new();
@@ -64,13 +75,9 @@ fn map_codebase(dir_path: &str) -> Result<GraphPayload, String> {
                             }
                         }
                     }
-                } else {
-                    // We don't have a parser for this file (e.g., .css, .md, .png).
-                    // We deliberately DO NOT read the file to avoid crashing on binaries.
-                    // It will be added to the graph as an "orphan" node with 0 imports.
                 }
 
-                nodes.push(FileNode {
+                raw_nodes.push(RawNode {
                     id: path_str,
                     name: file_name,
                     imports,
@@ -79,11 +86,85 @@ fn map_codebase(dir_path: &str) -> Result<GraphPayload, String> {
         }
     }
 
-    if nodes.is_empty() {
+    if raw_nodes.is_empty() {
         return Err("No files found in directory.".to_string());
     }
 
-    Ok(GraphPayload { nodes })
+    let mut temp_nodes = Vec::new();
+    let mut max_in_degree = 0;
+    let mut max_out_degree = 0;
+
+    for node in &raw_nodes {
+        let out_degree = node.imports.len();
+        let mut in_degree = 0;
+
+        // Get the filename without the extension
+        let file_stem = std::path::Path::new(&node.name)
+            .file_stem()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string();
+
+        // Cross-reference against every other node
+        for other_node in &raw_nodes {
+            if other_node.id == node.id {
+                continue;
+            }
+
+            if other_node
+                .imports
+                .iter()
+                .any(|import_str| import_str.contains(&file_stem))
+            {
+                in_degree += 1;
+            }
+        }
+
+        if in_degree > max_in_degree {
+            max_in_degree = in_degree;
+        }
+        if out_degree > max_out_degree {
+            max_out_degree = out_degree;
+        }
+
+        // Store the node with its calculated math
+        temp_nodes.push((node, in_degree, out_degree));
+    }
+
+    // Define dynamic thresholds
+    let high_in_threshold = ((max_in_degree as f32 * 0.15).ceil() as usize).max(2);
+    let high_out_threshold = ((max_out_degree as f32 * 0.15).ceil() as usize).max(2);
+
+    let mut final_nodes: Vec<FileNode> = Vec::new();
+
+    for (node, in_degree, out_degree) in temp_nodes {
+        let is_entry_point = in_degree == 0 && out_degree > 0;
+
+        let centrality_role = if in_degree == 0 && out_degree == 0 {
+            "Isolated / Dead Code".to_string()
+        } else if in_degree >= high_in_threshold && out_degree == 0 {
+            "Primitive / Foundation".to_string()
+        } else if in_degree >= high_in_threshold && out_degree >= high_out_threshold {
+            "Core Orchestrator".to_string()
+        } else if is_entry_point {
+            "Application Entry".to_string()
+        } else {
+            "Standard Node".to_string()
+        };
+
+        // Construct the final, serialized node
+        final_nodes.push(FileNode {
+            id: node.id.clone(),
+            name: node.name.clone(),
+            imports: node.imports.clone(),
+            in_degree,
+            out_degree,
+            centrality_role,
+            is_entry_point,
+        });
+    }
+
+    Ok(GraphPayload { nodes: final_nodes })
 }
 
 #[tauri::command]
