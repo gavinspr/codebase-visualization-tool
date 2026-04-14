@@ -30,7 +30,7 @@ export default function App() {
       });
 
       setNodes(result.nodes);
-      setStatus(`Successfully mapped ${result.nodes.length} TypeScript nodes.`);
+      setStatus(`Successfully mapped ${result.nodes.length} nodes.`);
       console.log("Graph Payload:", result);
     } catch (error) {
       setStatus(`Error: ${error}`);

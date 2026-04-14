@@ -3,6 +3,8 @@ use serde::Serialize;
 use std::fs;
 use tree_sitter::{Parser, Query, QueryCursor, StreamingIterator};
 
+mod language_router;
+
 #[derive(Serialize)]
 struct FileNode {
     id: String,
@@ -19,14 +21,6 @@ struct GraphPayload {
 fn map_codebase(dir_path: &str) -> Result<GraphPayload, String> {
     let mut nodes = Vec::new();
 
-    let mut parser = Parser::new();
-    let ts_lang: tree_sitter::Language = tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into();
-    parser.set_language(&ts_lang).map_err(|_| "Syntax Error")?;
-
-    let query_str = "(import_statement source: (string (string_fragment) @import_target))";
-    let query = Query::new(&ts_lang, query_str).map_err(|e| e.to_string())?;
-    let mut cursor = QueryCursor::new();
-
     let walker = WalkBuilder::new(dir_path)
         .hidden(true)
         .git_ignore(true)
@@ -37,53 +31,58 @@ fn map_codebase(dir_path: &str) -> Result<GraphPayload, String> {
             let path = entry.path();
 
             if path.is_file() {
-                // temp: Only parse TypeScript files to match our current grammar
-                let is_ts = path
-                    .extension()
-                    .and_then(|e| e.to_str())
-                    .map(|e| e == "ts" || e == "tsx")
-                    .unwrap_or(false);
+                let path_str = path.to_string_lossy().into_owned();
+                let file_name = path.file_name().unwrap().to_string_lossy().into_owned();
+                let mut imports = Vec::new();
 
-                if is_ts {
-                    let path_str = path.to_string_lossy().into_owned();
-                    let file_name = path.file_name().unwrap().to_string_lossy().into_owned();
+                let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
 
-                    // Read the file
+                if let Some(config) = language_router::get_parser_config(ext) {
                     if let Ok(source_code) = fs::read_to_string(path) {
-                        // Parse the file
-                        if let Some(tree) = parser.parse(&source_code, None) {
-                            let mut imports = Vec::new();
-                            let mut matches =
-                                cursor.matches(&query, tree.root_node(), source_code.as_bytes());
+                        let mut parser = Parser::new();
+                        if parser.set_language(&config.language).is_ok() {
+                            if let Some(tree) = parser.parse(&source_code, None) {
+                                if let Ok(query) = Query::new(&config.language, config.import_query)
+                                {
+                                    let mut cursor = QueryCursor::new();
+                                    let mut matches = cursor.matches(
+                                        &query,
+                                        tree.root_node(),
+                                        source_code.as_bytes(),
+                                    );
 
-                            // Extract the imports
-                            while let Some(m) = matches.next() {
-                                for capture in m.captures {
-                                    if let Ok(text) = capture.node.utf8_text(source_code.as_bytes())
-                                    {
-                                        imports.push(text.to_string());
+                                    while let Some(m) = matches.next() {
+                                        for capture in m.captures {
+                                            if let Ok(text) =
+                                                capture.node.utf8_text(source_code.as_bytes())
+                                            {
+                                                imports.push(text.to_string());
+                                            }
+                                        }
                                     }
                                 }
                             }
-
-                            // Build Node and add it to the graph
-                            nodes.push(FileNode {
-                                id: path_str,
-                                name: file_name,
-                                imports,
-                            });
                         }
                     }
+                } else {
+                    // We don't have a parser for this file (e.g., .css, .md, .png).
+                    // We deliberately DO NOT read the file to avoid crashing on binaries.
+                    // It will be added to the graph as an "orphan" node with 0 imports.
                 }
+
+                nodes.push(FileNode {
+                    id: path_str,
+                    name: file_name,
+                    imports,
+                });
             }
         }
     }
 
     if nodes.is_empty() {
-        return Err("No valid TypeScript files found to parse.".to_string());
+        return Err("No files found in directory.".to_string());
     }
 
-    // Return the structured payload
     Ok(GraphPayload { nodes })
 }
 
