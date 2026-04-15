@@ -1,21 +1,14 @@
 import { useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-
-interface FileNode {
-  id: string;
-  name: string;
-  imports: string[];
-}
-
-interface GraphPayload {
-  nodes: FileNode[];
-}
+import { generateGraphData, FileNode, GraphData } from "./lib/graph";
+import Graph3D from "./components/Graph3D";
 
 export default function App() {
   const [targetDir, setTargetDir] = useState("");
   const [status, setStatus] = useState("Ready for directory.");
   const [isScanning, setIsScanning] = useState(false);
   const [nodes, setNodes] = useState<FileNode[]>([]);
+  const [graphData, setGraphData] = useState<GraphData | null>(null);
 
   async function handleScan() {
     if (!targetDir) return;
@@ -25,13 +18,16 @@ export default function App() {
     setNodes([]);
 
     try {
-      const result = await invoke<GraphPayload>("map_codebase", {
+      const result = await invoke<{ nodes: FileNode[] }>("map_codebase", {
         dirPath: targetDir,
       });
 
       setNodes(result.nodes);
+
+      const formattedData = generateGraphData(result.nodes);
+      setGraphData(formattedData);
+
       setStatus(`Successfully mapped ${result.nodes.length} nodes.`);
-      console.log("Graph Payload:", result);
     } catch (error) {
       setStatus(`Error: ${error}`);
     } finally {
@@ -97,19 +93,15 @@ export default function App() {
         </div>
       </div>
       <div className="flex-1 relative bg-slate-950 flex items-center justify-center">
-        <div
-          className="absolute inset-0 opacity-5"
-          style={{
-            backgroundImage: "radial-gradient(#fff 1px, transparent 1px)",
-            backgroundSize: "30px 30px",
-          }}
-        ></div>
-
-        <div className="text-center z-10 border border-slate-800 bg-slate-900/80 p-8 rounded-lg shadow-2xl backdrop-blur-sm">
-          <h2 className="text-2xl font-bold text-white mb-2">
-            3D Graph Canvas Space
-          </h2>
-        </div>
+        {graphData && graphData.nodes.length > 0 ? (
+          <Graph3D data={graphData} />
+        ) : (
+          <div className="text-center z-10 border border-slate-800 bg-slate-900/80 p-8 rounded-lg shadow-2xl backdrop-blur-sm">
+            <h2 className="text-2xl font-bold text-slate-400 mb-2">
+              Awaiting Target Directory...
+            </h2>
+          </div>
+        )}
       </div>
     </div>
   );
